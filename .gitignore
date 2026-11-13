@@ -1,0 +1,7 @@
+node_modules/
+output/
+results/
+pools/
+*.tar.gz
+*.tgz
+.DS_Store

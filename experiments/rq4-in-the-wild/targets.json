@@ -1,0 +1,19 @@
+[
+  {
+    "id": "minimal-demo",
+    "name": "ReCall Minimal Fixture",
+    "type": "local",
+    "path": "ReCall/examples/minimal/bundle",
+    "library": "example-library",
+    "localRef": "ReCall/examples/minimal/source",
+    "expectedBundler": "rollup"
+  },
+  {
+    "id": "mattermost-focalboard",
+    "name": "Mattermost Focalboard Production Chunk",
+    "type": "local",
+    "path": "ReCall-Exp/results/validation/focalboard-parity-rerun/bundle",
+    "library": "lodash",
+    "expectedBundler": "parcel"
+  }
+]

@@ -1,0 +1,21 @@
+{
+  "name": "recall-wild",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Practical in-the-wild function recovery, version identification, and downstream security audit toolkit for ReCall.",
+  "type": "module",
+  "bin": {
+    "recall-wild": "bin/recall-wild.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "identify": "node bin/recall-wild.mjs identify",
+    "audit": "node bin/recall-wild.mjs audit",
+    "pipeline": "node bin/recall-wild.mjs pipeline",
+    "eval:rq4": "node experiments/rq4-in-the-wild/run-benchmark.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT"
+}
