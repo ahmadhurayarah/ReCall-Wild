@@ -85,6 +85,11 @@ export function extractPackageTarball(tarGzBuffer, destDir) {
     offset += 512;
 
     const cleanName = name.replace(/^package\//, '');
+    // Skip pre-minified distributions (*.min.js) so ReCall always recovers readable original symbol names
+    if (/\.min\.(?:[cm]?js)$/i.test(cleanName)) {
+      offset += Math.ceil(size / 512) * 512;
+      continue;
+    }
     const outPath = path.join(destDir, cleanName);
 
     if (type === 0x35 || name.endsWith('/')) { // Directory

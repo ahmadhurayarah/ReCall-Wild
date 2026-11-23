@@ -5,3 +5,5 @@ pools/
 *.tar.gz
 *.tgz
 .DS_Store
+.env
+.env.local
