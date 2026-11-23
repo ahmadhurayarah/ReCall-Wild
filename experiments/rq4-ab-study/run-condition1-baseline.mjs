@@ -68,18 +68,39 @@ const targetName = targetUrl
   : bundlePath
     ? path.basename(bundlePath, '.js')
     : 'unknown-target';
-const provider = getArg('--provider', 'deepseek').toLowerCase(); // 'deepseek' | 'ollama'
-const model = getArg(
-  '--model',
-  provider === 'deepseek'
-    ? process.env.DEEPSEEK_MODEL || 'deepseek-chat'
-    : process.env.OLLAMA_MODEL || 'qwen3.5:27b'
-);
+
+let providerArg = getArg('--provider');
+let modelArg = getArg('--model');
+
+// Auto-detect provider from model name if --provider is omitted
+let provider = (providerArg || '').toLowerCase();
+if (!provider && modelArg) {
+  const m = modelArg.toLowerCase();
+  if (m.startsWith('gemini')) provider = 'gemini';
+  else if (m.startsWith('deepseek')) provider = 'deepseek';
+  else if (m.startsWith('gpt-') || m.startsWith('o1') || m.startsWith('o3')) provider = 'openai';
+  else if (m.includes('qwen') || m.includes('llama') || m.includes(':')) provider = 'ollama';
+}
+if (!provider) provider = 'deepseek';
+
+let model = modelArg;
+if (!model) {
+  if (provider === 'gemini') model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  else if (provider === 'deepseek') model = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+  else if (provider === 'openai') model = process.env.OPENAI_MODEL || 'gpt-4o';
+  else if (provider === 'ollama') model = process.env.OLLAMA_MODEL || 'qwen3.5:27b';
+  else model = 'deepseek-chat';
+}
+
 const endpoint = getArg(
   '--endpoint',
-  provider === 'deepseek'
-    ? process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1/chat/completions'
-    : process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434/v1/chat/completions'
+  provider === 'gemini'
+    ? process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
+    : provider === 'deepseek'
+      ? process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1/chat/completions'
+      : provider === 'openai'
+        ? process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/chat/completions'
+        : process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434/v1/chat/completions'
 );
 const chunkSize = parseInt(getArg('--chunk-size', '12000'), 10);
 const chunkOverlap = parseInt(getArg('--overlap', '500'), 10);
@@ -97,9 +118,9 @@ RQ4 A/B Study — Condition 1: Baseline (WITHOUT ReCall)
 Options:
   --bundle <path>       Path to local raw minified JavaScript bundle
   --url <http(s)://...> Live website or localhost URL to crawl & scan
-  --provider <name>     'deepseek' (default) or 'ollama'
-  --model <name>        Model ID (default: 'deepseek-chat' or 'qwen3.5:27b')
-  --endpoint <url>      Custom OpenAI-compatible chat completions URL
+  --provider <name>     'deepseek' (default), 'gemini', 'openai', or 'ollama'
+  --model <name>        Model ID (e.g. 'gemini-2.5-flash', 'deepseek-chat', 'gpt-4o')
+  --endpoint <url>      Custom completions URL
   --chunk-size <n>      Characters per chunk (default: 12000)
   --overlap <n>         Overlap characters between chunks (default: 500)
   --max-chunks <n>      Max chunks to scan per bundle (default: 20)
@@ -115,10 +136,21 @@ if (resolvedBundle && !fs.existsSync(resolvedBundle)) {
   process.exit(1);
 }
 
-const apiKey = process.env.DEEPSEEK_API_KEY || (provider === 'ollama' ? 'ollama' : '');
-if (!dryRun && provider === 'deepseek' && !apiKey) {
-  console.error('Error: DEEPSEEK_API_KEY environment variable is not set.');
-  console.error('Run: export DEEPSEEK_API_KEY="sk-your-key-here"');
+let apiKey = '';
+if (provider === 'gemini') {
+  apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+} else if (provider === 'deepseek') {
+  apiKey = process.env.DEEPSEEK_API_KEY || '';
+} else if (provider === 'openai') {
+  apiKey = process.env.OPENAI_API_KEY || '';
+} else if (provider === 'ollama') {
+  apiKey = 'ollama';
+}
+
+if (!dryRun && provider !== 'ollama' && !apiKey) {
+  const envName = provider === 'gemini' ? 'GEMINI_API_KEY' : provider === 'openai' ? 'OPENAI_API_KEY' : 'DEEPSEEK_API_KEY';
+  console.error(`Error: ${envName} environment variable is not set.`);
+  console.error(`Run: export ${envName}="your-api-key-here"`);
   process.exit(1);
 }
 
@@ -146,7 +178,7 @@ function chunkCode(code, size, overlap, limit) {
 }
 
 /**
- * Call official OpenAI-compatible Chat Completions API (DeepSeek / Ollama)
+ * Call Chat Completions API (DeepSeek / Gemini / OpenAI / Ollama)
  */
 async function auditChunkWithLLM(chunk) {
   const userPrompt = `Inspect the following raw, minified client-side JavaScript bundle chunk (Condition 1: Baseline without function recovery) and return any potential security vulnerability warnings in strict JSON format.
@@ -157,13 +189,26 @@ ${chunk.code}
 \`\`\``;
 
   const t0 = performance.now();
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
-    },
-    body: JSON.stringify({
+  const isNativeGemini = endpoint.includes(':generateContent');
+  const requestUrl = (isNativeGemini && !endpoint.includes('key='))
+    ? `${endpoint}${endpoint.includes('?') ? '&' : '?'}key=${apiKey}`
+    : endpoint;
+
+  const headers = { 'Content-Type': 'application/json' };
+  let requestBody;
+
+  if (isNativeGemini) {
+    requestBody = JSON.stringify({
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+      generationConfig: {
+        temperature: 0.0,
+        response_mime_type: 'application/json'
+      }
+    });
+  } else {
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    requestBody = JSON.stringify({
       model,
       temperature: 0.0,
       response_format: { type: 'json_object' },
@@ -171,18 +216,26 @@ ${chunk.code}
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userPrompt }
       ]
-    })
+    });
+  }
+
+  const res = await fetch(requestUrl, {
+    method: 'POST',
+    headers,
+    body: requestBody
   });
 
   const elapsedMs = Math.round(performance.now() - t0);
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`HTTP ${res.status} from ${provider}: ${errText.slice(0, 300)}`);
+    throw new Error(`HTTP ${res.status} from ${provider} (${model}): ${errText.slice(0, 300)}`);
   }
 
   const data = await res.json();
-  const content = data?.choices?.[0]?.message?.content || '{"warnings":[]}';
-  const usage = data?.usage || {};
+  const content = data?.choices?.[0]?.message?.content
+    || data?.candidates?.[0]?.content?.parts?.[0]?.text
+    || '{"warnings":[]}';
+  const usage = data?.usage || data?.usageMetadata || {};
 
   let parsed = { warnings: [] };
   try {

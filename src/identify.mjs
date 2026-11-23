@@ -167,13 +167,28 @@ export async function identifyLibraryVersion(bundleManifestPath, pkgName, knownO
     };
   }
 
-  // 2. Fetch candidates from npm
-  const meta = await fetchRegistryManifest(pkgName);
+  // 2. Fetch candidates from npm (with offline fallback to cached pools)
+  const basePoolsDir = poolsDir || path.resolve(__dirname, '../pools', pkgName);
+  let meta = null;
+  try {
+    meta = await fetchRegistryManifest(pkgName);
+  } catch (err) {
+    if (fs.existsSync(basePoolsDir)) {
+      const cached = fs.readdirSync(basePoolsDir).filter(f => {
+        try { return fs.statSync(path.join(basePoolsDir, f)).isDirectory(); } catch { return false; }
+      });
+      if (cached.length > 0) {
+        console.log(`[VersionID] Registry fetch failed (${err.message}). Using ${cached.length} cached versions from pools/${pkgName}...`);
+        meta = { versions: Object.fromEntries(cached.map(v => [v, {}])) };
+      }
+    }
+    if (!meta) throw err;
+  }
+
   const allVersions = Object.keys(meta.versions || {});
   const candidateVersions = selectCandidateVersions(allVersions, knownOrBaseVersion, windowSize);
   console.log(`[VersionID] Evaluating ${candidateVersions.length} candidate versions:`, candidateVersions);
 
-  const basePoolsDir = poolsDir || path.resolve(__dirname, '../pools', pkgName);
   fs.mkdirSync(basePoolsDir, {recursive: true});
 
   const scores = [];
