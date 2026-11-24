@@ -385,7 +385,15 @@ ${chunk.code}
   const content = data?.choices?.[0]?.message?.content
     || data?.candidates?.[0]?.content?.parts?.[0]?.text
     || '{"warnings":[]}';
-  const usage = data?.usage || data?.usageMetadata || {};
+  const usageRaw = data?.usage || data?.usageMetadata || {};
+  const promptTokens = usageRaw.prompt_tokens ?? usageRaw.promptTokenCount ?? 0;
+  const completionTokens = usageRaw.completion_tokens ?? usageRaw.candidatesTokenCount ?? 0;
+  const totalTokens = usageRaw.total_tokens ?? usageRaw.totalTokenCount ?? (promptTokens + completionTokens);
+  const usage = {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens
+  };
 
   let parsed = { warnings: [] };
   try {
@@ -586,6 +594,7 @@ async function main() {
   const allWarnings = [];
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
+  let totalTokensUsed = 0;
   const startAll = performance.now();
 
   for (const chunk of chunks) {
@@ -598,6 +607,7 @@ async function main() {
       chunkResults.push(result);
       totalPromptTokens += result.usage?.prompt_tokens || 0;
       totalCompletionTokens += result.usage?.completion_tokens || 0;
+      totalTokensUsed += result.usage?.total_tokens || 0;
 
       for (const w of result.warnings) {
         allWarnings.push({ chunkIndex: chunk.index, ...w });
@@ -616,6 +626,9 @@ async function main() {
     }
   }
 
+  if (totalTokensUsed === 0) {
+    totalTokensUsed = totalPromptTokens + totalCompletionTokens;
+  }
   const totalElapsedMs = Math.round(performance.now() - startAll);
 
   const byCategory = {};
@@ -649,7 +662,8 @@ async function main() {
       byCategory,
       totalElapsedMs,
       totalPromptTokens,
-      totalCompletionTokens
+      totalCompletionTokens,
+      totalTokens: totalTokensUsed
     },
     warnings: allWarnings,
     chunkResults
@@ -668,6 +682,7 @@ async function main() {
     `- **ReCall Recovered Functions Mapped:** ${recallData.mappings.length}`,
     `- **Chunks Scanned:** ${chunks.length}`,
     `- **Total Runtime:** ${(totalElapsedMs / 1000).toFixed(2)}s`,
+    `- **Total Tokens Used:** **${totalTokensUsed.toLocaleString()}** (Prompt: ${totalPromptTokens.toLocaleString()}, Completion: ${totalCompletionTokens.toLocaleString()})`,
     `- **Total Warnings Reported (N_after):** **${allWarnings.length}**`,
     ``,
     `## Warning Breakdown by Severity`,
@@ -693,6 +708,7 @@ async function main() {
 
   console.log('\n===================================================================');
   console.log(`  Condition 2 Complete! Total Warnings (N_after): ${allWarnings.length}`);
+  console.log(`  Total Tokens Used: ${totalTokensUsed.toLocaleString()} (Prompt: ${totalPromptTokens.toLocaleString()}, Completion: ${totalCompletionTokens.toLocaleString()})`);
   console.log(`  JSON Report: ${jsonPath}`);
   console.log(`  MD Report:   ${mdPath}`);
   console.log('===================================================================');
